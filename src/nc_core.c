@@ -299,22 +299,26 @@ core_send(struct context *ctx, struct conn *conn)
     return status;
 }
 
-static void
+void
 core_close(struct context *ctx, struct conn *conn)
 {
     rstatus_t status;
     char type, *addrstr;
+    struct server_pool *pool;
+    int client_sd = -1;
 
     ASSERT(conn->sd > 0);
 
     if (conn->client) {
         type = 'c';
         addrstr = nc_unresolve_peer_desc(conn->sd);
+        client_sd = conn->sd;
+        pool = conn->owner;
     } else {
         type = conn->proxy ? 'p' : 's';
         addrstr = nc_unresolve_addr(conn->addr, conn->addrlen);
     }
-    log_debug(LOG_NOTICE, "close %c %d '%s' on event %04"PRIX32" eof %d done "
+    log_notice("close %c %d '%s' on event %04"PRIX32" eof %d done "
               "%d rb %zu sb %zu%c %s", type, conn->sd, addrstr, conn->events,
               conn->eof, conn->done, conn->recv_bytes, conn->send_bytes,
               conn->err ? ':' : ' ', conn->err ? strerror(conn->err) : "");
@@ -323,6 +327,10 @@ core_close(struct context *ctx, struct conn *conn)
     if (status < 0) {
         log_warn("event del conn %c %d failed, ignored: %s",
                  type, conn->sd, strerror(errno));
+    }
+
+    if (client_sd > 0) {
+        server_pool_disconnect_by_client(pool, client_sd);
     }
 
     conn->close(ctx, conn);
@@ -380,7 +388,7 @@ core_timeout(struct context *ctx)
             return;
         }
 
-        log_debug(LOG_INFO, "req %"PRIu64" on s %d timedout", msg->id, conn->sd);
+        log_warn("req %"PRIu64" on s %d timedout", msg->id, conn->sd);
 
         msg_tmo_delete(msg);
         conn->err = ETIMEDOUT;

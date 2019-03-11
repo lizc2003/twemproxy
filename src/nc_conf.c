@@ -204,8 +204,9 @@ conf_server_each_transform(void *elem, void *data)
 
     nc_memcpy(&s->info, &cs->info, sizeof(cs->info));
 
-    s->ns_conn_q = 0;
-    TAILQ_INIT(&s->s_conn_q);
+    //s->ns_conn_q = 0;
+    //TAILQ_INIT(&s->s_conn_q);
+    s->s_conn_map = NULL;
 
     s->next_retry = 0LL;
     s->failure_count = 0;

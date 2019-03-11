@@ -116,6 +116,12 @@ struct logger {
     }                                                                       \
 } while (0)
 
+#define log_notice(...) do {                                                  \
+    if (log_loggable(LOG_NOTICE) != 0) {                                      \
+        _log(LOG_NOTICE, __FILE__, __LINE__, 0, __VA_ARGS__);                 \
+    }                                                                       \
+} while (0)
+
 int log_init(int level, char *filename);
 void log_deinit(void);
 void log_level_up(void);

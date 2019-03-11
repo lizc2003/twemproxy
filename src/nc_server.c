@@ -50,8 +50,8 @@ server_ref(struct conn *conn, void *owner)
 
     server_resolve(server, conn);
 
-    server->ns_conn_q++;
-    TAILQ_INSERT_TAIL(&server->s_conn_q, conn, conn_tqe);
+    //server->ns_conn_q++;
+    //TAILQ_INSERT_TAIL(&server->s_conn_q, conn, conn_tqe);
 
     conn->owner = owner;
 
@@ -63,6 +63,7 @@ void
 server_unref(struct conn *conn)
 {
     struct server *server;
+    struct conn_hash_element *ele, *tmp;
 
     ASSERT(!conn->client && !conn->proxy);
     ASSERT(conn->owner != NULL);
@@ -70,9 +71,16 @@ server_unref(struct conn *conn)
     server = conn->owner;
     conn->owner = NULL;
 
-    ASSERT(server->ns_conn_q != 0);
-    server->ns_conn_q--;
-    TAILQ_REMOVE(&server->s_conn_q, conn, conn_tqe);
+    //ASSERT(server->ns_conn_q != 0);
+    //server->ns_conn_q--;
+    //TAILQ_REMOVE(&server->s_conn_q, conn, conn_tqe);
+    HASH_ITER(hh, server->s_conn_map, ele, tmp) {
+        if (ele->conn == conn) {
+            HASH_DEL(server->s_conn_map, ele);
+            free(ele);
+            break;
+        }
+    }
 
     log_debug(LOG_VVERB, "unref conn %p owner %p from '%.*s'", conn, server,
               server->pname.len, server->pname.data);
@@ -185,12 +193,25 @@ server_deinit(struct array *server)
 }
 
 struct conn *
-server_conn(struct server *server)
+server_conn(struct server *server, int client_sd)
 {
     struct server_pool *pool;
     struct conn *conn;
+    struct conn_hash_element *ele;
 
     pool = server->owner;
+
+    HASH_FIND_INT(server->s_conn_map, &client_sd, ele);
+    if (ele == NULL) {
+        conn = conn_get(server, false, pool->redis);
+        ele = (struct conn_hash_element *)malloc(sizeof *ele);
+        ele->sd = client_sd;
+        ele->conn = conn;
+        HASH_ADD_INT(server->s_conn_map, sd, ele);
+    } else {
+        conn = ele->conn;
+    }
+    return conn;
 
     /*
      * FIXME: handle multiple server connections per server and do load
@@ -198,47 +219,68 @@ server_conn(struct server *server)
      * 'server_connections:' > 0 key
      */
 
-    if (server->ns_conn_q < pool->server_connections) {
-        return conn_get(server, false, pool->redis);
-    }
-    ASSERT(server->ns_conn_q == pool->server_connections);
+    //if (server->ns_conn_q < pool->server_connections) {
+    //    return conn_get(server, false, pool->redis);
+    //}
+    //ASSERT(server->ns_conn_q == pool->server_connections);
 
     /*
      * Pick a server connection from the head of the queue and insert
      * it back into the tail of queue to maintain the lru order
      */
-    conn = TAILQ_FIRST(&server->s_conn_q);
-    ASSERT(!conn->client && !conn->proxy);
+    //conn = TAILQ_FIRST(&server->s_conn_q);
+    //ASSERT(!conn->client && !conn->proxy);
 
-    TAILQ_REMOVE(&server->s_conn_q, conn, conn_tqe);
-    TAILQ_INSERT_TAIL(&server->s_conn_q, conn, conn_tqe);
+    //TAILQ_REMOVE(&server->s_conn_q, conn, conn_tqe);
+    //TAILQ_INSERT_TAIL(&server->s_conn_q, conn, conn_tqe);
 
-    return conn;
+    //return conn;
 }
 
+// static rstatus_t
+// server_each_preconnect(void *elem, void *data)
+// {
+//     rstatus_t status;
+//     struct server *server;
+//     struct server_pool *pool;
+//     struct conn *conn;
+
+//     server = elem;
+//     pool = server->owner;
+
+//     conn = server_conn(server);
+//     if (conn == NULL) {
+//         return NC_ENOMEM;
+//     }
+
+//     status = server_connect(pool->ctx, server, conn);
+//     if (status != NC_OK) {
+//         log_warn("connect to server '%.*s' failed, ignored: %s",
+//                  server->pname.len, server->pname.data, strerror(errno));
+//         server_close(pool->ctx, conn);
+//     }
+
+//     return NC_OK;
+// }
+
 static rstatus_t
-server_each_preconnect(void *elem, void *data)
+server_each_disconnect_by_client(void *elem, void *data)
 {
-    rstatus_t status;
     struct server *server;
     struct server_pool *pool;
-    struct conn *conn;
+    struct context *ctx;
+    struct conn_hash_element *ele, *tmp;
+    int client_sd = (int)(intptr_t)data;
 
     server = elem;
     pool = server->owner;
+    ctx = pool->ctx;
 
-    conn = server_conn(server);
-    if (conn == NULL) {
-        return NC_ENOMEM;
+    HASH_ITER(hh, server->s_conn_map, ele, tmp) {
+        if (ele->sd == client_sd) {
+            core_close(ctx, ele->conn);
+        }
     }
-
-    status = server_connect(pool->ctx, server, conn);
-    if (status != NC_OK) {
-        log_warn("connect to server '%.*s' failed, ignored: %s",
-                 server->pname.len, server->pname.data, strerror(errno));
-        server_close(pool->ctx, conn);
-    }
-
     return NC_OK;
 }
 
@@ -247,20 +289,18 @@ server_each_disconnect(void *elem, void *data)
 {
     struct server *server;
     struct server_pool *pool;
+    struct context *ctx;
+    struct conn_hash_element *ele, *tmp;
 
     server = elem;
     pool = server->owner;
+    ctx = pool->ctx;
 
-    while (!TAILQ_EMPTY(&server->s_conn_q)) {
-        struct conn *conn;
-
-        ASSERT(server->ns_conn_q > 0);
-
-        conn = TAILQ_FIRST(&server->s_conn_q);
-        event_del_conn(pool->ctx->evb, conn);
-        conn->close(pool->ctx, conn);
+    HASH_ITER(hh, server->s_conn_map, ele, tmp) {
+        struct conn *conn = ele->conn;
+        event_del_conn(ctx->evb, conn);
+        conn->close(ctx, conn);
     }
-
     return NC_OK;
 }
 
@@ -490,7 +530,7 @@ server_connect(struct context *ctx, struct server *server, struct conn *conn)
         return NC_OK;
     }
 
-    log_debug(LOG_VVERB, "connect to server '%.*s'", server->pname.len,
+    log_notice("connect to server '%.*s'", server->pname.len,
               server->pname.data);
 
     conn->sd = socket(conn->family, SOCK_STREAM, 0);
@@ -720,13 +760,13 @@ server_pool_server(struct server_pool *pool, uint8_t *key, uint32_t keylen)
 }
 
 struct conn *
-server_get_conn(struct context *ctx, struct server *srv)
+server_get_conn(struct context *ctx, struct server *srv, int client_sd)
 {
     struct conn *conn;
     rstatus_t status;
 
     /* pick a connection to a given server */
-    conn = server_conn(srv);
+    conn = server_conn(srv, client_sd);
     if (conn == NULL) {
         return NULL;
     }
@@ -741,7 +781,7 @@ server_get_conn(struct context *ctx, struct server *srv)
 }
 
 struct conn *
-server_pool_conn(struct context *ctx, struct server_pool *pool, uint8_t *key,
+server_pool_conn(struct context *ctx, struct server_pool *pool, int client_sd, uint8_t *key,
                  uint32_t keylen)
 {
     rstatus_t status;
@@ -757,29 +797,29 @@ server_pool_conn(struct context *ctx, struct server_pool *pool, uint8_t *key,
     if (server == NULL) {
         return NULL;
     }
-    return server_get_conn(ctx, server);
+    return server_get_conn(ctx, server, client_sd);
 }
 
 static rstatus_t
 server_pool_each_preconnect(void *elem, void *data)
 {
-    rstatus_t status;
-    struct server_pool *sp = elem;
+    // rstatus_t status;
+    // struct server_pool *sp = elem;
 
-    if (!sp->preconnect) {
-        return NC_OK;
-    }
+    // if (!sp->preconnect) {
+    //     return NC_OK;
+    // }
 
-    if (array_n(&sp->redis_master) > 0) {
-        status = array_each(&sp->redis_master, server_each_preconnect, NULL);
-        if (status != NC_OK) {
-            return status;
-        }
-    }
-    status = array_each(&sp->server, server_each_preconnect, NULL);
-    if (status != NC_OK) {
-        return status;
-    }
+    // if (array_n(&sp->redis_master) > 0) {
+    //     status = array_each(&sp->redis_master, server_each_preconnect, NULL);
+    //     if (status != NC_OK) {
+    //         return status;
+    //     }
+    // }
+    // status = array_each(&sp->server, server_each_preconnect, NULL);
+    // if (status != NC_OK) {
+    //     return status;
+    // }
 
     return NC_OK;
 }
@@ -815,6 +855,12 @@ void
 server_pool_disconnect(struct context *ctx)
 {
     array_each(&ctx->pool, server_pool_each_disconnect, NULL);
+}
+
+void
+server_pool_disconnect_by_client(struct server_pool *pool, int client_sd)
+{
+    array_each(&pool->server, server_each_disconnect_by_client, (void*)(intptr_t)client_sd);
 }
 
 static rstatus_t

@@ -376,6 +376,39 @@ rsp_send_done(struct context *ctx, struct conn *conn, struct msg *msg)
     /* dequeue request from client outq */
     conn->dequeue_outq(ctx, conn, pmsg);
 
+    if (pmsg->frag_id == 0 || pmsg->frag_owner == pmsg) {
+        req_time = nc_msec_now()-pmsg->start_ts/1000;
+        if (req_time >= 800 && pmsg->mlen > 0 && array_n(pmsg->keys) > 0) {
+            struct keypos *kpos;
+            struct string *req_type;
+            char *peer_str;
+            uint32_t req_len, rsp_len;
+            uint32_t server_index;
+            uint32_t key_len;
+            struct server_pool *pool;
+            struct server *server;
+            
+            req_len = pmsg->mlen;
+            rsp_len = msg->mlen;
+            peer_str = nc_unresolve_peer_desc(pmsg->owner->sd);
+            req_type = msg_type_string(pmsg->type);
+            kpos = array_get(pmsg->keys, 0);
+            key_len = (uint32_t)(kpos->end - kpos->start);
+            pool = conn->owner;
+            server_index = server_pool_idx(pool, kpos->start, key_len);
+            server = array_get(&pool->server, server_index);
+
+            log_warn("slowreq %"PRIu64" time %"PRIi64" ms"
+              " type %.*s key0 %.*s"
+              " svr %.*s cli %s"
+              " narg %"PRIu32" rsplen %"PRIu32" reqlen %"PRIu32" sd %d err %d done %d",
+              pmsg->id, req_time,
+              req_type->len, req_type->data, key_len, kpos->start, 
+              server->name.len, server->name.data, peer_str,
+              pmsg->narg, rsp_len, req_len, pmsg->owner->sd, pmsg->error, pmsg->done);
+       }
+    }
+
     req_put(pmsg);
 
     if (pm_terminate) {
@@ -383,7 +416,7 @@ rsp_send_done(struct context *ctx, struct conn *conn, struct msg *msg)
     }
     /* only record the request's latency, and ignore the fragment */
     if (pmsg->frag_id == 0 || pmsg->frag_owner == pmsg) {
-        req_time = nc_msec_now()-pmsg->start_ts/1000;
+        //req_time = nc_msec_now()-pmsg->start_ts/1000;
         stats_pool_record_latency(conn_to_ctx(conn), conn->owner, req_time);
     }
 }

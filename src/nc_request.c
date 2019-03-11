@@ -587,9 +587,9 @@ req_forward(struct context *ctx, struct conn *c_conn, struct msg *msg)
     if (pool->redis && !redis_readonly(msg) && array_n(&pool->redis_master) > 0) {
         struct server *master = array_get(&pool->redis_master, 0);
         /* pick a connection to a given server */
-        s_conn = server_get_conn(ctx, master);
+        s_conn = server_get_conn(ctx, master, c_conn->sd);
     } else {
-        s_conn = server_pool_conn(ctx, c_conn->owner, key, keylen);
+        s_conn = server_pool_conn(ctx, c_conn->owner, c_conn->sd, key, keylen);
     }
     if (s_conn == NULL) {
         req_forward_error(ctx, c_conn, msg);

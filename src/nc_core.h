@@ -170,5 +170,6 @@ void core_stop(struct context *ctx);
 rstatus_t core_core(void *evb, void *arg, uint32_t events);
 rstatus_t core_loop(struct context *ctx);
 void core_ctx_destroy(struct context *ctx);
+void core_close(struct context *ctx, struct conn *conn);
 
 #endif
