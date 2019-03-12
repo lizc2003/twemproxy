@@ -328,12 +328,11 @@ core_close(struct context *ctx, struct conn *conn)
         log_warn("event del conn %c %d failed, ignored: %s",
                  type, conn->sd, strerror(errno));
     }
+    conn->close(ctx, conn);
 
     if (client_sd > 0) {
         server_pool_disconnect_by_client(pool, client_sd);
     }
-
-    conn->close(ctx, conn);
 }
 
 static void
