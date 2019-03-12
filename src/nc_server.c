@@ -187,7 +187,7 @@ server_deinit(struct array *server)
         struct server *s;
 
         s = array_pop(server);
-        ASSERT(TAILQ_EMPTY(&s->s_conn_q) && s->ns_conn_q == 0);
+        //ASSERT(TAILQ_EMPTY(&s->s_conn_q) && s->ns_conn_q == 0);
     }
     array_deinit(server);
 }
