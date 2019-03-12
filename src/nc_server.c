@@ -268,19 +268,17 @@ server_each_disconnect_by_client(void *elem, void *data)
 {
     struct server *server;
     struct server_pool *pool;
-    struct context *ctx;
-    struct conn_hash_element *ele, *tmp;
+    struct conn_hash_element *ele;
     int client_sd = (int)(intptr_t)data;
 
     server = elem;
     pool = server->owner;
-    ctx = pool->ctx;
 
-    HASH_ITER(hh, server->s_conn_map, ele, tmp) {
-        if (ele->sd == client_sd) {
-            core_close(ctx, ele->conn);
-        }
+    HASH_FIND_INT(server->s_conn_map, &client_sd, ele);
+    if (ele != NULL) {
+        core_close(pool->ctx, ele->conn);
     }
+
     return NC_OK;
 }
 
@@ -301,6 +299,7 @@ server_each_disconnect(void *elem, void *data)
         event_del_conn(ctx->evb, conn);
         conn->close(ctx, conn);
     }
+
     return NC_OK;
 }
 
